@@ -19,7 +19,7 @@ This spec uses [CAIP-2](https://namespaces.chainagnostic.org/tvm/caip2) identifi
 
 The `exact` scheme on TON transfers a specific amount of a [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) Jetton from the client to the resource server using a W5 (v5r1) wallet signed message.
 
-The facilitator IS the relay. It sponsors gas (~0.013 TON per transaction) by wrapping the client-signed message in an internal TON message from its own funded wallet. The client resolves signing data (seqno, Jetton wallet address) via a TON RPC endpoint, signs locally, and sends the result. The facilitator cannot modify the destination or amount; the client controls payment intent through Ed25519 signature.
+The facilitator IS the relay. It sponsors gas (~0.013 TON per transaction) by wrapping the client-signed message in an internal TON message from its own funded wallet. The client resolves signing data (seqno, Jetton wallet address) via a TON RPC endpoint, signs locally, and sends the result. The facilitator cannot modify the destination or amount; the client controls payment intent through Ed25519 signature. The facilitator also attaches enough TON to the relay message to cover payer-wallet execution of the relayed message and to fund the client-signed inner transfer.
 
 There is no relay commission. The facilitator absorbs gas costs as the cost of operating the payment network, analogous to how EVM facilitators pay gas for `transferWithAuthorization`.
 
@@ -28,7 +28,7 @@ There is no relay commission. The facilitator absorbs gas costs as the cost of o
 1. **Client** requests a protected resource from the **Resource Server**.
 2. **Resource Server** responds with HTTP 402 and `PaymentRequired` data. The `accepts` array includes a TON payment option.
 3. **Client** queries a TON RPC endpoint to resolve its Jetton wallet address (`get_wallet_address` on the Jetton master contract) and fetches its current wallet seqno.
-4. **Client** constructs a `jetton_transfer` body ([TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)) and wraps it in a bounceable W5 `internal_signed` message with [sending mode 1 (PAY_FEES_SEPARATELY)](https://docs.ton.org/foundations/messages/modes).
+4. **Client** constructs a `jetton_transfer` body ([TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md)) and wraps it in a W5 `internal_signed` message with [sending mode 1 (PAY_FEES_SEPARATELY)](https://docs.ton.org/foundations/messages/modes). The outbound internal message sent by the client's W5 wallet to the source Jetton wallet MUST be bounceable.
 5. **Client** signs the message with their Ed25519 private key.
 6. **Client** wraps the signed body in an internal message BoC (dest = client wallet, value = 0, with `stateInit` if the wallet account is not yet deployed, i.e. [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)) and base64-encodes it.
 7. **Client** sends a second request to the **Resource Server** with the `PaymentPayload`.
@@ -71,7 +71,7 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 
 ## PaymentPayload `payload` Field
 
-The payload contains only the signed settlement BoC and the asset identifier. All other fields (sender address, amount, destination, public key, `forwardPayload`, and `forwardTonAmount`) are derived from the BoC by the facilitator:
+The payload contains only the signed settlement BoC and the asset identifier. All other fields (sender address, amount, destination, public key, `responseDestination`, `forwardPayload`, and `forwardTonAmount`) are derived from the BoC by the facilitator:
 
 ```json
 {
@@ -112,7 +112,7 @@ Full `PaymentPayload` object:
 
 **Field Definitions:**
 
-- `settlementBoc`: Base64-encoded TON internal message BoC. The internal message carries the signed W5 body as the `body` field, the client's wallet as `dest`, and optionally a `stateInit` for first-time wallet deployment. The message that the client's W5 wallet sends to the jetton wallet MUST be bounceable.
+- `settlementBoc`: Base64-encoded TON internal message BoC. The internal message carries the signed W5 body as the `body` field, the client's wallet as `dest`, and optionally a `stateInit` for first-time wallet deployment. The `settlementBoc` wrapper itself does not need to be bounceable. The outbound internal message sent by the client's W5 wallet to the source Jetton wallet MUST be bounceable.
 - `asset`: Jetton master contract address in raw format. Kept as an explicit field for future multi-asset protocol extensions.
 
 The facilitator derives the following from the BoC:
@@ -164,8 +164,8 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - The transfer amount MUST be equal to `requirements.amount`.
 - The Jetton master address (`payload.asset`) MUST equal `requirements.asset`. Note: [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) `jetton_transfer` does not carry the master contract address in its body, so the on-chain asset binding is verified in the next check.
 - The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This binds the BoC to the correct asset on-chain and prevents a malicious BoC from using a substitute Jetton wallet.
-- The `destination`, `response_destination`, `forward_payload`, and `forward_ton_amount` parameters inside the `jetton_transfer` body MUST match the effective parameters in `requirements`: `requirements.payTo`, `requirements.extra.responseDestination ?? addr_none`, `requirements.extra.forwardPayload ?? zero_bit_payload`, and `requirements.extra.forwardTonAmount ?? "0"`.
-- The TON value carried by the user's signed internal message MUST be sufficient to cover execution of the payer-side transaction chain, including the effective `forward_ton_amount` (`requirements.extra.forwardTonAmount ?? "0"`) and all gas fees paid by the payer wallet. Facilitators SHOULD satisfy this check via emulation.
+- The `destination`, `response_destination`, `forward_payload`, and `forward_ton_amount` parameters inside the `jetton_transfer` body MUST match the effective parameters in `requirements`: `requirements.payTo`, `requirements.extra.responseDestination ?? addr_none`, `requirements.extra.forwardPayload ?? zero-bit payload`, and `requirements.extra.forwardTonAmount ?? "0"`.
+- The TON value carried by the user's signed internal message MUST be sufficient to cover execution starting from the payer wallet's outgoing message to the source Jetton wallet, including the effective `forward_ton_amount` (`requirements.extra.forwardTonAmount ?? "0"`) and downstream Jetton-wallet execution costs. Fees for delivering and executing the outer relay message on the payer wallet itself are sponsored separately by the facilitator and therefore do NOT need to be covered by the user's signed internal message. Facilitators SHOULD satisfy this check via emulation.
 - The client MUST have sufficient balance of the payment asset.
 
 ### 4. Replay protection
@@ -187,7 +187,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 1. Re-run all verification checks (do not trust prior `/verify` result).
 2. Extract the signed body and optional `stateInit` from the internal message BoC.
 3. Estimate gas via emulation: build a trial relay message, emulate the trace, and sum all fees across the trace.
-4. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching sufficient TON to fund execution of the payer-side internal message. If the client's BoC contains a `stateInit` segment (indicating the wallet is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)), include it in the relay message to enable wallet deployment.
+4. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching sufficient TON to cover both (a) the outer relay delivery and payer-wallet execution fees and (b) the value expected by the client's signed internal message. If the client's BoC contains a `stateInit` segment (indicating the wallet is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)), include it in the relay message to enable wallet deployment.
 5. Sign and broadcast the facilitator's external message.
 6. Wait for transaction confirmation.
 7. Return x402 `SettlementResponse` with `success`, `transaction`, `network`, and `payer`.
