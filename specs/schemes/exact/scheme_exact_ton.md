@@ -64,8 +64,8 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
 - `asset`: [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) Jetton master contract address (raw format `workchain:hex`).
 - `payTo`: Recipient TON address (raw format).
 - `amount`: Atomic token amount (6 decimals for USDT, so `10000` = $0.01). Decimals can be queried via `get_jetton_data` on the Jetton master contract.
-- `extra.forwardPayload`: base64-encoded jetton transfer forward payload (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68)). 
-- `extra.forwardTonAmount`: the amount of nanotons to be attached to the jetton transfe (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68))
+- `extra.forwardPayload` (optional): base64-encoded jetton transfer forward payload (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68)). If omitted, the effective value is a zero bit cell.
+- `extra.forwardTonAmount` (optional): the amount of nanotons to be attached to the jetton transfer (see [TEP-74](https://github.com/ton-blockchain/TEPs/blob/63fc78718dd9930f3e106954ebec743c3ad07993/text/0074-jettons-standard.md?plain=1#L68)). If omitted, the effective value is `"0"`.
 - `extra.areFeesSponsored`: Whether the facilitator sponsors gas fees. Currently always `true`; a non-sponsored flow will be added in a follow-up spec.
 
 ## PaymentPayload `payload` Field
@@ -118,7 +118,7 @@ The facilitator derives the following from the BoC:
 
 - **Sender address**: the `dest` field of the internal message (the client's wallet).
 - **Public key**: from the `stateInit` data cell (if present) or via the on-chain `get_public_key` getter.
-- **walletId, amount, destination, validUntil, seqno, forwardTonAmount, forwardPayload**: from the W5 signed body and its actions.
+- **walletId, amount, destination, validUntil, seqno, forwardTonAmount, forwardPayload**: from the W5 signed body and its actions. If `accepted.extra.forwardTonAmount` or `accepted.extra.forwardPayload` are omitted, the facilitator compares against the effective defaults (`"0"` and zero bit payload respectively).
 
 ## `SettlementResponse`
 
@@ -162,7 +162,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 - The transfer amount MUST be equal to `requirements.amount`.
 - The Jetton master address (`payload.asset`) MUST equal `requirements.asset`. Note: [TEP-74](https://github.com/ton-blockchain/TEPs/blob/master/text/0074-jettons-standard.md) `jetton_transfer` does not carry the master contract address in its body, so the on-chain asset binding is verified in the next check.
 - The source Jetton wallet (the destination of the W5 internal message in the BoC) MUST match the Jetton wallet address returned by `get_wallet_address(sender)` on the Jetton master contract (`requirements.asset`). This binds the BoC to the correct asset on-chain and prevents a malicious BoC from using a substitute Jetton wallet.
-- The `destination`, `forward_payload` and `forward_ton_amount` parameters inside the `jetton_transfer` body MUST match the corresponding parameters in `requirements` (requirements.payTo, requirements.forwardPayload, requirements.forwardTonAmount).
+- The `destination`, `forward_payload` and `forward_ton_amount` parameters inside the `jetton_transfer` body MUST match the effective parameters in `requirements`: `requirements.payTo`, `requirements.extra.forwardPayload ?? zero_bit_payload`, and `requirements.extra.forwardTonAmount ?? "0"`.
 - The `response_destination` inside the `jetton_transfer` should be equal to `addr_none` (i.e. 2 zero bits)
 - The client MUST have sufficient balance of the payment asset.
 
@@ -185,7 +185,7 @@ A facilitator verifying `exact` on TON MUST enforce all of the following checks 
 1. Re-run all verification checks (do not trust prior `/verify` result).
 2. Extract the signed body and optional `stateInit` from the internal message BoC.
 3. Estimate gas via emulation: build a trial relay message, emulate the trace, and sum all fees across the trace.
-4. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching sufficient TON to cover both the estimated gas fees and the `forwardTonAmount`. If the client's BoC contains a `stateInit` segment (indicating the wallet is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)), include this in the relay message to enable wallet deployment.
+4. Build the relay message: wrap the user's signed body in a bounceable internal message from the facilitator's wallet to the user's wallet, attaching sufficient TON to cover both the estimated gas fees and the effective `forwardTonAmount` (`requirements.extra.forwardTonAmount ?? "0"`). If the client's BoC contains a `stateInit` segment (indicating the wallet is [`nonexist` or `uninit`](https://docs.ton.org/foundations/status)), include this in the relay message to enable wallet deployment.
 5. Sign and broadcast the facilitator's external message.
 6. Wait for transaction confirmation.
 7. Return x402 `SettlementResponse` with `success`, `transaction`, `network`, and `payer`.
@@ -282,4 +282,3 @@ TON uses the [TEP-74 Jetton standard](https://github.com/ton-blockchain/TEPs/blo
 - [TVM CAIP-2 Namespace](https://namespaces.chainagnostic.org/tvm/caip2)
 - [Facilitator](https://github.com/ohld/x402-ton-facilitator)
 - [POC](https://github.com/ohld/x402-ton-poc)
-
