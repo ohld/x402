@@ -54,6 +54,7 @@ In addition to standard x402 fields, TON `exact` uses `extra` fields:
   "extra": {
     "forwardPayload": "te6cckEBAgEAkwABnYgBFpKiX...",
     "forwardTonAmount": "50000000",
+    "responseDestination": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
     "areFeesSponsored": true
   }
 }
@@ -100,6 +101,7 @@ Full `PaymentPayload` object:
     "extra": {
       "forwardPayload": "te6cckEBAgEAkwABnYgBFpKiX...",
       "forwardTonAmount": "50000000",
+      "responseDestination": "0:92433a576cbe56c4dcc86d94b497a2cf18a9baa9c8283fea28ea43eb3c25cfed",
       "areFeesSponsored": true
     }
   },
